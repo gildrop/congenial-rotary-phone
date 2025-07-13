@@ -1,48 +1,80 @@
-// server.js (no express)
-const http = require("http");
+// tag-server/server.js
 const WebSocket = require("ws");
-
-const PORT = process.env.PORT || 8080;
-
-const server = http.createServer((req, res) => {
-  res.writeHead(200);
-  res.end("WebSocket server is running.");
-});
-
-const wss = new WebSocket.Server({ server });
+const server = new WebSocket.Server({ port: process.env.PORT || 8080 });
 
 let players = {};
-let nextPlayerId = 1;
+let next_id = 1;
 
-wss.on("connection", (ws) => {
-  const id = nextPlayerId++;
-  players[id] = { x: 100, y: 100 };
+function broadcast_except(sender, data) {
+  const msg = JSON.stringify(data);
+  for (const id in players) {
+    const p = players[id];
+    if (p.socket !== sender && p.socket.readyState === WebSocket.OPEN) {
+      p.socket.send(msg);
+    }
+  }
+}
 
-  ws.send(JSON.stringify({ type: "init", id, players }));
+server.on("connection", (ws) => {
+  const id = next_id++;
+  const x = 100 + Math.floor(Math.random() * 400);
+  const y = 200;
+  players[id] = { id, x, y, socket: ws };
 
-  ws.on("message", (data) => {
-    const msg = JSON.parse(data);
-    if (msg.type === "move") {
-      players[id] = { x: msg.x, y: msg.y };
-      broadcast({ type: "update", id, x: msg.x, y: msg.y });
+  console.log(`Player ${id} connected`);
+
+  // Send this player's ID
+  ws.send(JSON.stringify({ type: "assign_id", id }));
+
+  // Send list of existing players
+  ws.send(JSON.stringify({
+    type: "player_list",
+    players: Object.values(players)
+      .filter(p => p.id !== id)
+      .map(p => ({ id: p.id, x: p.x, y: p.y }))
+  }));
+
+  // Notify others that a new player joined
+  broadcast_except(ws, {
+    type: "player_joined",
+    id,
+    x,
+    y
+  });
+
+  ws.on("message", (msg) => {
+    let data;
+    try {
+      data = JSON.parse(msg);
+    } catch (e) {
+      console.warn("Invalid message received:", msg);
+      return;
+    }
+
+    switch (data.type) {
+      case "position":
+        if (players[id]) {
+          players[id].x = data.x;
+          players[id].y = data.y;
+          broadcast_except(ws, {
+            type: "position",
+            id,
+            x: data.x,
+            y: data.y
+          });
+        }
+        break;
+
+      // Future message types (tagged, action, chat, etc) can be handled here
+
+      default:
+        console.warn("Unknown message type:", data.type);
     }
   });
 
   ws.on("close", () => {
+    console.log(`Player ${id} disconnected`);
     delete players[id];
-    broadcast({ type: "remove", id });
+    broadcast_except(ws, { type: "player_left", id });
   });
-});
-
-function broadcast(msg) {
-  const json = JSON.stringify(msg);
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(json);
-    }
-  });
-}
-
-server.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
 });
