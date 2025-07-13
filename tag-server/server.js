@@ -65,6 +65,14 @@ server.on("connection", (ws) => {
         }
         break;
 
+      case "chat":
+      broadcast_except(ws, {
+        type: "chat",
+        id,
+        message: data.message
+      });
+      break;
+        
       // Future message types (tagged, action, chat, etc) can be handled here
 
       default:
