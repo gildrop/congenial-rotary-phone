@@ -1,29 +1,33 @@
 // tag-server/server.js
+const express = require('express');
+const http = require('http');
 const WebSocket = require('ws');
-const server = new WebSocket.Server({ port: 8080 });
+
+const PORT = process.env.PORT || 8080;
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
 
 let players = {};
 let nextPlayerId = 1;
 
-server.on('connection', (socket) => {
+app.get('/', (req, res) => res.send("WebSocket server is running."));
+
+wss.on('connection', (ws) => {
   const id = nextPlayerId++;
   players[id] = { x: 100, y: 100 };
 
-  socket.send(JSON.stringify({ type: 'init', id, players }));
+  ws.send(JSON.stringify({ type: 'init', id, players }));
 
-  socket.on('message', (data) => {
+  ws.on('message', (data) => {
     const msg = JSON.parse(data);
-
     if (msg.type === 'move') {
-      if (players[id]) {
-        players[id].x = msg.x;
-        players[id].y = msg.y;
-        broadcast({ type: 'update', id, x: msg.x, y: msg.y });
-      }
+      players[id] = { x: msg.x, y: msg.y };
+      broadcast({ type: 'update', id, x: msg.x, y: msg.y });
     }
   });
 
-  socket.on('close', () => {
+  ws.on('close', () => {
     delete players[id];
     broadcast({ type: 'remove', id });
   });
@@ -31,11 +35,13 @@ server.on('connection', (socket) => {
 
 function broadcast(msg) {
   const json = JSON.stringify(msg);
-  server.clients.forEach(client => {
+  wss.clients.forEach(client => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(json);
     }
   });
 }
 
-console.log('WebSocket server running on ws://localhost:8080');
+server.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});
